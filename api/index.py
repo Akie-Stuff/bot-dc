@@ -4,10 +4,7 @@ from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from nacl.signing import VerifyKey
 from nacl.exceptions import BadSignatureError
 from openai import OpenAI
-from dotenv import load_dotenv
 from mangum import Mangum
-
-load_dotenv()
 
 app = FastAPI()
 
