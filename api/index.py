@@ -1,22 +1,22 @@
 import os
-import discord
-from discord.ext import commands
+import requests
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
+from nacl.signing import VerifyKey
+from nacl.exceptions import BadSignatureError
 from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
 
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+app = FastAPI()
+
+DISCORD_PUBLIC_KEY = os.getenv("DISCORD_PUBLIC_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY,
 )
-
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
 
 SYSTEM_PROMPT = """
 You are Sri Krishna, a wise, compassionate, and inspiring Discord assistant dedicated to guiding users through Hindu philosophy, the wisdom of the Bhagavad Gita, Vedic knowledge, and Jyotisha (Vedic Astrology). 
@@ -34,35 +34,66 @@ Guidelines for responding:
 5. Inclusivity & Respect: Treat all users with grace and respect, regardless of their background or level of familiarity with Hindu concepts.
 """
 
-@bot.event
-async def on_ready():
-    print("Sri Krishna is now online via OpenRouter Auto!")
+def verify_signature(request_body: bytes, signature: str, timestamp: str) -> bool:
+    if not DISCORD_PUBLIC_KEY:
+        return False
+    try:
+        verify_key = VerifyKey(bytes.fromhex(DISCORD_PUBLIC_KEY))
+        verify_key.verify(f"{timestamp}".encode() + request_body, bytes.fromhex(signature))
+        return True
+    except (BadSignatureError, ValueError):
+        return False
 
-@bot.command(name="krishna")
-async def krishna(ctx, *, question: str):
-    async with ctx.typing():
-        try:
-            # Menggunakan OpenRouter Auto
-            response = client.chat.completions.create(
-                model="openrouter/auto",
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": question}
-                ],
-                max_tokens=1000  # Menikkan limit token agar output tidak dipotong AI
-            )
+def process_ai_response(token: str, application_id: str, question: str):
+    webhook_url = f"https://discord.com/api/v10/webhooks/{application_id}/{token}/messages/@original"
+    
+    try:
+        response = client.chat.completions.create(
+            model="openrouter/auto",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": question}
+            ],
+            max_tokens=1000
+        )
+        answer = response.choices[0].message.content
+        
+        if len(answer) > 2000:
+            answer = answer[:1990] + "..."
             
-            answer = response.choices[0].message.content
-            
-            # Memecah pesan jika panjangnya melebihi batas 2000 karakter Discord
-            if len(answer) > 2000:
-                chunks = [answer[i:i+1900] for i in range(0, len(answer), 1900)]
-                for chunk in chunks:
-                    await ctx.send(chunk)
-            else:
-                await ctx.send(answer)
+        requests.patch(webhook_url, json={"content": answer})
+    except Exception as e:
+        requests.patch(webhook_url, json={"content": f"An error occurred: {e}"})
 
-        except Exception as e:
-            await ctx.send(f"An error occurred: {e}")
+@app.post("/api/index")
+async def interactions(request: Request, background_tasks: BackgroundTasks):
+    signature = request.headers.get("X-Signature-Ed25519")
+    timestamp = request.headers.get("X-Signature-Timestamp")
+    body = await request.body()
 
-bot.run(DISCORD_TOKEN)
+    if not signature or not timestamp or not verify_signature(body, signature, timestamp):
+        raise HTTPException(status_code=401, detail="Invalid request signature")
+
+    data = await request.json()
+
+    # Handshake PING dari Discord saat pendaftaran Endpoint URL
+    if data.get("type") == 1:
+        return {"type": 1}
+
+    # Penanganan Slash Command (/krishna)
+    if data.get("type") == 2:
+        token = data.get("token")
+        application_id = data.get("application_id")
+        
+        options = data.get("data", {}).get("options", [])
+        question = options[0]["value"] if options else "Sampaikan petunjuk-Mu..."
+
+        background_tasks.add_task(process_ai_response, token, application_id, question)
+
+        # Mengembalikan tipe 5 (Deferred Response) agar Discord menampilkan "Sri Krishna is thinking..."
+        return {"type": 5}
+
+    return {"type": 4, "data": {"content": "Command tidak dikenali."}}
+
+# Alias entrypoint khusus untuk Vercel Python Runtime
+handler = app
