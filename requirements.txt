@@ -1,4 +1,4 @@
 fastapi
-mangum
 pynacl
 requests
+openai
