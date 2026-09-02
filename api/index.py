@@ -1,6 +1,6 @@
 import os
-import httpx
 import requests
+import httpx
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from nacl.signing import VerifyKey
 from nacl.exceptions import BadSignatureError
@@ -17,19 +17,12 @@ client = OpenAI(
 )
 
 SYSTEM_PROMPT = """
-You are Sri Krishna, a wise, compassionate, and inspiring Discord assistant dedicated to guiding users through Hindu philosophy, the wisdom of the Bhagavad Gita, Vedic knowledge, and Jyotisha (Vedic Astrology). 
+You are Sri Krishna, a wise, compassionate, and inspiring Discord assistant dedicated to guiding users through Hindu philosophy, the wisdom of the Bhagavad Gita, Vedic knowledge, and Jyotisha.
 
-Your core persona:
-- Name: Sri Krishna
-- Demeanor: Loving, profoundly wise, calm, encouraging, and culturally respectful.
-- Objective: Provide clear, educational, and uplifting answers about Hindu scriptures (especially the Bhagavad Gita, Upanishads, and Vedas), life principles, karma, dharma, and Vedic astrology concepts.
-
-Guidelines for responding:
-1. Tone & Style: Speak with depth, clarity, and gentle warmth. Frame answers with timeless spiritual insight while keeping them accessible and relevant to modern life.
-2. Structure: Break down complex philosophical ideas into clear bullet points or concise paragraphs. Keep responses concise enough to fit naturally in Discord messages.
-3. Astrological Guidance: When answering questions about Jyotisha, frame insights constructively for personal spiritual growth and action (Karma) rather than strict fatalism.
-4. Discord Formatting: Use bolding, bullet points, and clean spacing for easy readability on Discord.
-5. Inclusivity & Respect: Treat all users with grace and respect, regardless of their background or level of familiarity with Hindu concepts.
+Core Constraints:
+1. BREVITY IS CRITICAL: Keep your response concise, complete, and strictly under 300 words (or 1,500 characters).
+2. Never stop mid-sentence. Always conclude your thoughts naturally with a complete ending.
+3. Use clean Discord formatting (bolding, short bullet points).
 """
 
 def verify_signature(request_body: bytes, signature: str, timestamp: str) -> bool:
@@ -47,14 +40,13 @@ async def process_ai_response(token: str, application_id: str, question: str):
     original_msg_url = f"{base_webhook_url}/messages/@original"
     
     try:
-        # Gunakan client async untuk OpenRouter
         response = client.chat.completions.create(
             model="openrouter/auto",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": question}
             ],
-            max_tokens=600  # Diturunkan sedikit agar AI tidak generate terlalu panjang & cepat selesai
+            max_tokens=1500  # Dinaikkan agar AI tidak terpotong di tengah kalimat
         )
         answer = response.choices[0].message.content
         
@@ -63,9 +55,7 @@ async def process_ai_response(token: str, application_id: str, question: str):
                 await http_client.patch(original_msg_url, json={"content": answer})
             else:
                 chunks = [answer[i:i+1900] for i in range(0, len(answer), 1900)]
-                # Kirim potongan pertama
                 await http_client.patch(original_msg_url, json={"content": chunks[0]})
-                # Kirim sisa potongan secara cepat
                 for chunk in chunks[1:]:
                     await http_client.post(base_webhook_url, json={"content": chunk})
 
@@ -84,11 +74,9 @@ async def interactions(request: Request, background_tasks: BackgroundTasks):
 
     data = await request.json()
 
-    # Handshake PING dari Discord saat pendaftaran Endpoint URL
     if data.get("type") == 1:
         return {"type": 1}
 
-    # Penanganan Slash Command (/krishna)
     if data.get("type") == 2:
         token = data.get("token")
         application_id = data.get("application_id")
@@ -98,10 +86,8 @@ async def interactions(request: Request, background_tasks: BackgroundTasks):
 
         background_tasks.add_task(process_ai_response, token, application_id, question)
 
-        # Mengembalikan tipe 5 (Deferred Response) agar Discord menampilkan "Sri Krishna is thinking..."
         return {"type": 5}
 
     return {"type": 4, "data": {"content": "Command tidak dikenali."}}
 
-# Alias entrypoint khusus untuk Vercel Python Runtime
 handler = app
