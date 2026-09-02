@@ -42,7 +42,8 @@ def verify_signature(request_body: bytes, signature: str, timestamp: str) -> boo
         return False
 
 def process_ai_response(token: str, application_id: str, question: str):
-    webhook_url = f"https://discord.com/api/v10/webhooks/{application_id}/{token}/messages/@original"
+    base_webhook_url = f"https://discord.com/api/v10/webhooks/{application_id}/{token}"
+    original_msg_url = f"{base_webhook_url}/messages/@original"
     
     try:
         response = client.chat.completions.create(
@@ -55,12 +56,22 @@ def process_ai_response(token: str, application_id: str, question: str):
         )
         answer = response.choices[0].message.content
         
-        if len(answer) > 2000:
-            answer = answer[:1990] + "..."
+        # Jika panjang jawaban <= 2000 karakter, update pesan utama secara langsung
+        if len(answer) <= 2000:
+            requests.patch(original_msg_url, json={"content": answer})
+        else:
+            # Pecah menjadi beberapa bagian (chunks) berukuran max 1900 karakter
+            chunks = [answer[i:i+1900] for i in range(0, len(answer), 1900)]
             
-        requests.patch(webhook_url, json={"content": answer})
+            # 1. Update pesan pertama (original message) dengan potongan pertama
+            requests.patch(original_msg_url, json={"content": chunks[0]})
+            
+            # 2. Kirim pesan-pesan selanjutnya sebagai follow-up webhook
+            for chunk in chunks[1:]:
+                requests.post(base_webhook_url, json={"content": chunk})
+
     except Exception as e:
-        requests.patch(webhook_url, json={"content": f"An error occurred: {e}"})
+        requests.patch(original_msg_url, json={"content": f"An error occurred: {e}"})
 
 @app.post("/api/index")
 async def interactions(request: Request, background_tasks: BackgroundTasks):
