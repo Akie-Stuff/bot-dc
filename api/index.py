@@ -4,7 +4,6 @@ from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from nacl.signing import VerifyKey
 from nacl.exceptions import BadSignatureError
 from openai import OpenAI
-from mangum import Mangum
 
 app = FastAPI()
 
@@ -94,4 +93,4 @@ async def interactions(request: Request, background_tasks: BackgroundTasks):
     return {"type": 4, "data": {"content": "Command tidak dikenali."}}
 
 # Alias entrypoint khusus untuk Vercel Python Runtime
-handler = Magnum(app)
+handler = app
