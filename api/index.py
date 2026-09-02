@@ -1,4 +1,5 @@
 import os
+import httpx
 import requests
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from nacl.signing import VerifyKey
@@ -41,37 +42,36 @@ def verify_signature(request_body: bytes, signature: str, timestamp: str) -> boo
     except (BadSignatureError, ValueError):
         return False
 
-def process_ai_response(token: str, application_id: str, question: str):
+async def process_ai_response(token: str, application_id: str, question: str):
     base_webhook_url = f"https://discord.com/api/v10/webhooks/{application_id}/{token}"
     original_msg_url = f"{base_webhook_url}/messages/@original"
     
     try:
+        # Gunakan client async untuk OpenRouter
         response = client.chat.completions.create(
             model="openrouter/auto",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": question}
             ],
-            max_tokens=1000
+            max_tokens=600  # Diturunkan sedikit agar AI tidak generate terlalu panjang & cepat selesai
         )
         answer = response.choices[0].message.content
         
-        # Jika panjang jawaban <= 2000 karakter, update pesan utama secara langsung
-        if len(answer) <= 2000:
-            requests.patch(original_msg_url, json={"content": answer})
-        else:
-            # Pecah menjadi beberapa bagian (chunks) berukuran max 1900 karakter
-            chunks = [answer[i:i+1900] for i in range(0, len(answer), 1900)]
-            
-            # 1. Update pesan pertama (original message) dengan potongan pertama
-            requests.patch(original_msg_url, json={"content": chunks[0]})
-            
-            # 2. Kirim pesan-pesan selanjutnya sebagai follow-up webhook
-            for chunk in chunks[1:]:
-                requests.post(base_webhook_url, json={"content": chunk})
+        async with httpx.AsyncClient() as http_client:
+            if len(answer) <= 1900:
+                await http_client.patch(original_msg_url, json={"content": answer})
+            else:
+                chunks = [answer[i:i+1900] for i in range(0, len(answer), 1900)]
+                # Kirim potongan pertama
+                await http_client.patch(original_msg_url, json={"content": chunks[0]})
+                # Kirim sisa potongan secara cepat
+                for chunk in chunks[1:]:
+                    await http_client.post(base_webhook_url, json={"content": chunk})
 
     except Exception as e:
-        requests.patch(original_msg_url, json={"content": f"An error occurred: {e}"})
+        async with httpx.AsyncClient() as http_client:
+            await http_client.patch(original_msg_url, json={"content": f"An error occurred: {e}"})
 
 @app.post("/api/index")
 async def interactions(request: Request, background_tasks: BackgroundTasks):
