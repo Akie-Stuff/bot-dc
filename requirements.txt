@@ -1,3 +1,4 @@
-discord.py
-openai
-python-dotenv
+fastapi
+mangum
+pynacl
+requests
